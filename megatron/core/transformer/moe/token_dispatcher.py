@@ -521,9 +521,16 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
             self.num_out_tokens = num_local_tokens_per_expert.sum()
             self._maybe_update_cuda_sync_point("before_permutation_1")
         else:
-            # For dropless training, output size is static (num_tokens * topk)
-            # No explicit sync needed
-            self.num_out_tokens = routing_map.size(0) * self.config.moe_router_topk
+            # For dropless training, output size is normally num_tokens * topk.
+            # Under routing replay (R3), the replayed routing_map can have fewer
+            # than topk experts per token (duplicate / -1 entries collapse in the
+            # boolean map), so num_tokens*topk overcounts and disagrees with
+            # input_splits (= routing_map True-count), causing "Split sizes doesn't
+            # match total dim 0 size" in the EP all-to-all. Derive it from the
+            # actual routing_map to stay consistent (equals num_tokens*topk in the
+            # normal dense case; needs the GPU->CPU sync like the dropping path).
+            self.num_out_tokens = num_local_tokens_per_expert.sum()
+            self._maybe_update_cuda_sync_point("before_permutation_1")
         if self.ep_size > 1 or self.tp_size > 1:
             # ===================================================
             # Calculate input_splits, output_splits for alltoall/allgather in variable size.
